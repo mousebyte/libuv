@@ -367,7 +367,7 @@ int uv_tty_set_mode(uv_tty_t* tty, uv_tty_mode_t mode) {
       flags = ENABLE_ECHO_INPUT | ENABLE_LINE_INPUT | ENABLE_PROCESSED_INPUT;
       break;
     case UV_TTY_MODE_RAW:
-      flags = ENABLE_WINDOW_INPUT;
+      flags = ENABLE_WINDOW_INPUT | ENABLE_VIRTUAL_TERMINAL_INPUT;
       break;
     case UV_TTY_MODE_IO:
       return UV_ENOTSUP;
@@ -811,6 +811,14 @@ void uv_process_tty_read_raw_req(uv_loop_t* loop, uv_tty_t* handle,
           /* UTF-16 high surrogate */
           handle->tty.rd.last_utf16_high_surrogate = KEV.uChar.UnicodeChar;
           continue;
+        } else {
+            if (KEV.uChar.UnicodeChar >= 0 &&
+                KEV.uChar.UnicodeChar < 128) {
+                handle->tty.rd.last_key[0] = (char)(KEV.uChar.UnicodeChar);
+                handle->tty.rd.last_key_len = 1;
+                handle->tty.rd.last_key_offset = 0;
+                continue;
+                }
         }
 
         /* Prefix with \u033 if alt was held, but alt was not used as part a
@@ -868,38 +876,6 @@ void uv_process_tty_read_raw_req(uv_loop_t* loop, uv_tty_t* handle,
         handle->tty.rd.last_key_offset = 0;
         continue;
 
-      } else {
-        /* Function key pressed */
-        const char* vt100;
-        size_t prefix_len, vt100_len;
-
-        vt100 = get_vt100_fn_key(KEV.wVirtualKeyCode,
-                                  !!(KEV.dwControlKeyState & SHIFT_PRESSED),
-                                  !!(KEV.dwControlKeyState & (
-                                    LEFT_CTRL_PRESSED |
-                                    RIGHT_CTRL_PRESSED)),
-                                  &vt100_len);
-
-        /* If we were unable to map to a vt100 sequence, just ignore. */
-        if (!vt100) {
-          continue;
-        }
-
-        /* Prefix with \x033 when the alt key was held. */
-        if (KEV.dwControlKeyState & (LEFT_ALT_PRESSED | RIGHT_ALT_PRESSED)) {
-          handle->tty.rd.last_key[0] = '\033';
-          prefix_len = 1;
-        } else {
-          prefix_len = 0;
-        }
-
-        /* Copy the vt100 sequence to the handle buffer. */
-        assert(prefix_len + vt100_len < sizeof handle->tty.rd.last_key);
-        memcpy(&handle->tty.rd.last_key[prefix_len], vt100, vt100_len);
-
-        handle->tty.rd.last_key_len = (unsigned char) (prefix_len + vt100_len);
-        handle->tty.rd.last_key_offset = 0;
-        continue;
       }
     } else {
       /* Copy any bytes left from the last keypress to the user buffer. */
